@@ -8,10 +8,13 @@ import AllStatusCodes from "../../utils/AllStatusCodes.js";
 import appConfig from "../../config/config.js";
 import { successResponse } from "../../utils/responseHandler.js";
 import UploadVideoServices from "../../services/UploadVideo/index.services.js";
+import { deleteFileByName } from "../../utils/deleteFileByName.js";
 
 export const uploadVideo = (req, res, next) => {
-    const lessonId = uuidv4();
+    // const lessonId = uuidv4();
+    const lessonId = req.file.filename.replace('file', '').replace(path.extname(req.file.filename), '');
     const videoPath = req.file.path;
+
     // Fix the output path - use absolute path
     const outputPath = path.join(process.cwd(), "uploads", "courses", lessonId);
     const hlsPath = `${outputPath}/index.m3u8`;
@@ -111,6 +114,9 @@ export const delVideoByLessonId = async (req, res, next) => {
             // Then delete the folder itself
             fs.rmdirSync(videoFolderPath);
         }
+
+        // Then delete all video files outside courses folder ...
+        await deleteFileByName(`${process.cwd()}/uploads/`, lessonId);
 
         successResponse(res, {
             status: AllStatusCodes.OK,
