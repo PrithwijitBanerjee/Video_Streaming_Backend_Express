@@ -9,6 +9,7 @@ import appConfig from "../../config/config.js";
 import { successResponse } from "../../utils/responseHandler.js";
 import UploadVideoServices from "../../services/UploadVideo/index.services.js";
 import { deleteFileByName } from "../../utils/deleteFileByName.js";
+import ffmpeg from "fluent-ffmpeg";
 
 export const uploadVideo = (req, res, next) => {
     // const lessonId = uuidv4();
@@ -25,38 +26,95 @@ export const uploadVideo = (req, res, next) => {
         });
     }
     // ffmpeg
-    const ffmpegCommand = `ffmpeg -i ${videoPath} -codec:v libx264 -codec:a aac -hls_time 10 -hls_playlist_type vod -hls_segment_filename "${outputPath}/segment%03d.ts" -start_number 0 ${hlsPath}`;
+    // const ffmpegCommand = `ffmpeg -i ${videoPath} -codec:v libx264 -codec:a aac -hls_time 10 -hls_playlist_type vod -hls_segment_filename "${outputPath}/segment%03d.ts" -start_number 0 ${hlsPath}`;
 
     // no queue because of POC, not to be used in production
-    exec(ffmpegCommand, async (error, stdout, stderr) => {
-        try {
-            if (error) {
-                console.log(`exec error: ${error}`);
-                return next(createError(AllStatusCodes.InternalServerError, error));
-            }
-            // console.log("stdout: ", stdout);
-            // console.log("stderr: ", stderr);
-            const videoUrl = `http://localhost:${appConfig.app.port}/uploads/courses/${lessonId}/index.m3u8`;
-            const videoData = await UploadVideoServices.addVideo({
-                lessonId,
-                videoUrl,
-            });
-            if (!videoData) {
-                return next(createError(AllStatusCodes.BadRequest, "can not able to upload video!!!"));
-            }
-            successResponse(res, {
-                status: 200,
-                message: "Video converted to HLS format",
-                payload: {
-                    // videoUrl,
-                    ...videoData,
-                },
-            });
+    // exec(ffmpegCommand, async (error, stdout, stderr) => {
+    //     try {
+    //         if (error) {
+    //             console.log(`exec error: ${error}`);
+    //             return next(createError(AllStatusCodes.InternalServerError, error));
+    //         }
+    //         // console.log("stdout: ", stdout);
+    //         // console.log("stderr: ", stderr);
+    //         const videoUrl = `http://localhost:${appConfig.app.port}/uploads/courses/${lessonId}/index.m3u8`;
+    //         const videoData = await UploadVideoServices.addVideo({
+    //             lessonId,
+    //             videoUrl,
+    //         });
+    //         if (!videoData) {
+    //             return next(createError(AllStatusCodes.BadRequest, "can not able to upload video!!!"));
+    //         }
+    //         successResponse(res, {
+    //             status: 200,
+    //             message: "Video converted to HLS format",
+    //             payload: {
+    //                 // videoUrl,
+    //                 ...videoData,
+    //             },
+    //         });
 
-        } catch (error) {
-            next(createError(AllStatusCodes.InternalServerError, error?.message));
-        }
-    });
+    //     } catch (error) {
+    //         next(createError(AllStatusCodes.InternalServerError, error?.message));
+    //     }
+    // });
+
+    // Use fluent-ffmpeg instead of exec command
+    ffmpeg(videoPath)
+        .videoCodec('libx264')
+        .audioCodec('aac')
+        .addOption('-hls_time', '10')
+        .addOption('-hls_playlist_type', 'vod')
+        .addOption('-hls_segment_filename', `${outputPath}/segment%03d.ts`)
+        .addOption('-start_number', '0')
+        .output(hlsPath)
+        .on('start', (commandLine) => {
+            console.log('FFmpeg process started:', commandLine);
+        })
+        .on('progress', (progress) => {
+            // Handle different progress object structures
+            let progressInfo = '';
+
+            if (progress.percent !== undefined) {
+                progressInfo = `Processing: ${progress.percent.toFixed(2)}% done`;
+            } else if (progress.timemark) {
+                progressInfo = `Processing: Current timestamp - ${progress.timemark}`;
+            } else if (progress.frames) {
+                progressInfo = `Processing: ${progress.frames} frames processed`;
+            } else {
+                progressInfo = 'Processing in progress...';
+            }
+            console.log(progressInfo);
+        })
+        .on('end', async () => {
+            try {
+                console.log('FFmpeg processing finished successfully');
+                const videoUrl = `http://localhost:${appConfig.app.port}/uploads/courses/${lessonId}/index.m3u8`;
+                const videoData = await UploadVideoServices.addVideo({
+                    lessonId,
+                    videoUrl,
+                });
+
+                if (!videoData) {
+                    return next(createError(AllStatusCodes.BadRequest, "can not able to upload video!!!"));
+                }
+
+                successResponse(res, {
+                    status: 200,
+                    message: "Video converted to HLS format",
+                    payload: {
+                        ...videoData,
+                    },
+                });
+            } catch (error) {
+                next(createError(AllStatusCodes.InternalServerError, error?.message));
+            }
+        })
+        .on('error', (error) => {
+            console.log('FFmpeg error:', error);
+            return next(createError(AllStatusCodes.InternalServerError, error.message));
+        })
+        .run();
 };
 
 export const getAllVideos = async (_, res, next) => {
